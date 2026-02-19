@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - sqlite_data:/app/data
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///./data/fasttrack.db
+
+volumes:
+  sqlite_data:
