@@ -1,349 +1,198 @@
-# A09: agentforge — Multi-Agent Orchestration Framework
+# P06: fasttrack — Async REST API with FastAPI
 
-**Catalog ID:** A09 | **Size:** L | **Language:** Go 1.26
-**Repo name:** `agentforge`
-**One-liner:** A multi-agent orchestration framework — a supervisor agent decomposes tasks into a dependency DAG, delegates to specialized sub-agents (researcher, coder, reviewer, writer), manages shared memory, and synthesizes results. Built from primitives, no frameworks.
+**Catalog ID:** P06 | **Size:** M | **Language:** Python 3.14 / FastAPI 0.115
+**Repo name:** `fasttrack`
+**One-liner:** A production-grade async REST API with FastAPI — SQLModel ORM, JWT authentication with refresh tokens, role-based permissions, WebSocket notifications, background tasks, cursor-based pagination, rate limiting, and a comprehensive async test suite.
 
 ---
 
 ## Why This Stands Out
 
-- **The flagship AI project** — this is the most impressive, most complex project in the entire portfolio
-- **Supervisor agent** — receives a complex task, uses chain-of-thought planning to decompose it into a DAG of sub-tasks with dependencies
-- **Specialized agents** — researcher (web search), coder (code generation), reviewer (code review), writer (text synthesis) — each with a system prompt, tools, and memory
-- **Agent execution loop** — the core pattern: system prompt → user message → LLM → tool call → execute tool → feed result → repeat until done
-- **Shared memory** — key-value store that agents read/write for collaboration (researcher stores findings, coder reads them)
-- **DAG execution engine** — topological sort, parallel execution of independent sub-tasks, respects dependencies
-- **Tool system** — JSON Schema tool definitions, timeout-guarded execution, result parsing, extensible tool registry
-- **Multi-provider LLM** — interface supporting OpenAI, Anthropic, and Ollama with streaming
-- **Token budget management** — per-agent conversation history with automatic trimming when approaching token limits
-- **Observability** — structured logging of every agent decision, tool call, and result — full execution trace
-- **CLI** — `agentforge run "Build a REST API in Go"` — runs the full multi-agent flow in the terminal with live output
-- **No LangChain/LangGraph/CrewAI** — built from raw HTTP calls and Go primitives, demonstrating deep understanding of how agent systems actually work
-- **YAML configuration** — agent definitions, tool registrations, and LLM settings all in YAML — agents are configurable without code changes
+- **Async throughout** — every database query, HTTP handler, and background task uses `async`/`await` with aiosqlite, demonstrating real async Python proficiency
+- **SQLModel ORM** — type-safe models that are simultaneously SQLAlchemy ORM models and Pydantic validation schemas, created by the FastAPI author himself
+- **JWT with refresh tokens** — proper auth flow with short-lived access tokens, long-lived refresh tokens, token rotation, and revocation via database blocklist
+- **Role-based access control** — dependency-injectable permission system with admin/user roles, resource ownership checks, and decorator-free authorization
+- **WebSocket notifications** — real-time push notifications over WebSocket with connection management, heartbeat, and per-user channels
+- **Cursor-based pagination** — opaque cursors instead of offset/limit, providing stable pagination that doesn't break when data changes
+- **Rate limiting middleware** — sliding-window rate limiter per IP and per user with configurable limits and Redis-free in-memory storage
+- **Alembic migrations** — proper schema versioning with auto-generated migrations, not `create_all()` shortcuts
 
 ---
 
 ## Architecture
 
 ```
-agentforge/
-├── cmd/
-│   └── agentforge/
-│       └── main.go                        # CLI entry: parse args, load config, run supervisor
-├── internal/
-│   ├── agent/
-│   │   ├── agent.go                       # Core agent: system prompt, tools, memory, execution loop
-│   │   ├── agent_test.go
-│   │   ├── config.go                      # Agent config: name, model, system prompt, tools, limits
-│   │   ├── loop.go                        # Execution loop: prompt → LLM → tool call → result → repeat
-│   │   ├── loop_test.go
-│   │   └── types.go                       # AgentResult, AgentStatus, LoopState
-│   ├── supervisor/
-│   │   ├── supervisor.go                  # Supervisor agent: receives task, plans, delegates, synthesizes
-│   │   ├── supervisor_test.go
-│   │   ├── planner.go                     # Task decomposition: complex task → DAG of sub-tasks
-│   │   ├── planner_test.go
-│   │   ├── synthesizer.go                 # Result synthesis: merge sub-agent outputs into final answer
-│   │   └── synthesizer_test.go
-│   ├── agents/
-│   │   ├── researcher.go                  # Researcher agent: web search tool, extract + summarize info
-│   │   ├── researcher_test.go
-│   │   ├── coder.go                       # Coder agent: code generation tool, write + explain code
-│   │   ├── coder_test.go
-│   │   ├── reviewer.go                    # Reviewer agent: code review tool, analyze code for issues
-│   │   ├── reviewer_test.go
-│   │   ├── writer.go                      # Writer agent: text generation, format + structure prose
-│   │   └── writer_test.go
-│   ├── planner/
-│   │   ├── dag.go                         # DAG data structure: nodes, edges, topological sort
-│   │   ├── dag_test.go
-│   │   ├── task.go                        # SubTask: id, description, agent type, dependencies, status
-│   │   └── task_test.go
-│   ├── executor/
-│   │   ├── executor.go                    # DAG executor: run sub-tasks respecting dependencies
-│   │   ├── executor_test.go
-│   │   ├── parallel.go                    # Parallel execution with errgroup + semaphore
-│   │   └── parallel_test.go
-│   ├── memory/
-│   │   ├── store.go                       # Shared memory: thread-safe key-value store
-│   │   ├── store_test.go
-│   │   └── types.go                       # MemoryEntry: key, value, author (agent name), timestamp
-│   ├── tools/
-│   │   ├── registry.go                    # Tool registry: register, list, get, invoke
-│   │   ├── registry_test.go
-│   │   ├── tool.go                        # Tool interface: Name, Description, Schema, Execute
-│   │   ├── web_search.go                  # Web search tool (simulated or API-backed)
-│   │   ├── web_search_test.go
-│   │   ├── code_gen.go                    # Code generation tool (delegates to LLM with code prompt)
-│   │   ├── code_review.go                 # Code review tool (analyzes code for issues)
-│   │   ├── text_gen.go                    # Text generation tool (delegates to LLM with writing prompt)
-│   │   ├── read_file.go                   # Read file from disk (sandboxed)
-│   │   ├── write_file.go                  # Write file to disk (sandboxed output directory)
-│   │   ├── memory_read.go                 # Read from shared memory
-│   │   ├── memory_write.go                # Write to shared memory
-│   │   └── schema.go                      # JSON Schema builder for tool parameters
-│   ├── provider/
-│   │   ├── provider.go                    # LLM provider interface: ChatComplete, Stream
-│   │   ├── openai.go                      # OpenAI: chat/completions with function calling
-│   │   ├── openai_test.go
-│   │   ├── anthropic.go                   # Anthropic: messages API with tool_use
-│   │   ├── anthropic_test.go
-│   │   ├── ollama.go                      # Ollama: local model API with tool support
-│   │   ├── ollama_test.go
-│   │   ├── mock.go                        # Mock provider for deterministic testing
-│   │   └── types.go                       # Message, ToolCall, ToolResult, Usage, StreamChunk
-│   ├── history/
-│   │   ├── history.go                     # Conversation history per agent with token counting
-│   │   ├── history_test.go
-│   │   ├── trimmer.go                     # Token budget trimmer: drop oldest messages to fit limit
-│   │   └── trimmer_test.go
-│   ├── config/
-│   │   ├── loader.go                      # Load YAML config files: agents, tools, providers
-│   │   ├── loader_test.go
-│   │   └── types.go                       # Config structs: AgentConfig, ToolConfig, ProviderConfig
-│   └── observability/
-│       ├── logger.go                      # Structured logger: agent events, tool calls, decisions
-│       ├── logger_test.go
-│       ├── trace.go                       # Execution trace: full DAG execution timeline
-│       └── types.go                       # TraceEvent, TraceSpan, EventType
-├── config/
-│   ├── agents.yaml                        # Agent definitions: name, model, system prompt, tools
-│   ├── tools.yaml                         # Tool registrations: name, description, schema
-│   └── providers.yaml                     # LLM provider config: API keys (env refs), models, defaults
-├── examples/
-│   ├── simple/main.go                     # Single-agent: researcher answers a question
-│   ├── code-task/main.go                  # Multi-agent: plan → code → review → deliver
-│   └── research-report/main.go            # Multi-agent: research → write → synthesize report
-├── testdata/
-│   ├── mock_responses/                    # Scripted LLM responses for deterministic tests
-│   │   ├── planner_response.json
-│   │   ├── researcher_response.json
-│   │   ├── coder_response.json
-│   │   └── reviewer_response.json
-│   └── configs/                           # Test config files
-│       ├── test_agents.yaml
-│       └── test_tools.yaml
-├── go.mod
-├── go.sum
-├── Makefile                               # build, test, lint, run, examples
-├── .env.example                           # OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_URL
+fasttrack/
+├── src/
+│   └── fasttrack/
+│       ├── __init__.py
+│       ├── main.py              # FastAPI app factory, lifespan, middleware registration
+│       ├── config.py            # Settings via pydantic-settings (env + .env file)
+│       ├── database.py          # Async engine, session factory, base model
+│       ├── models/
+│       │   ├── __init__.py
+│       │   ├── user.py          # User model: email, hashed_password, role, is_active
+│       │   ├── project.py       # Project model: name, description, owner_id, status
+│       │   ├── task.py          # Task model: title, description, status, priority, assignee_id, project_id
+│       │   └── comment.py       # Comment model: body, author_id, task_id, created_at
+│       ├── schemas/
+│       │   ├── __init__.py
+│       │   ├── user.py          # User create/read/update schemas
+│       │   ├── project.py       # Project create/read/update schemas
+│       │   ├── task.py          # Task create/read/update schemas
+│       │   ├── comment.py       # Comment create/read schemas
+│       │   ├── auth.py          # Login request, token response, refresh request
+│       │   └── pagination.py    # Cursor-based pagination response wrapper
+│       ├── routers/
+│       │   ├── __init__.py
+│       │   ├── auth.py          # POST /auth/login, /auth/refresh, /auth/logout
+│       │   ├── users.py         # GET/PATCH /users, GET /users/me
+│       │   ├── projects.py      # CRUD /projects with ownership checks
+│       │   ├── tasks.py         # CRUD /projects/{id}/tasks with assignment
+│       │   └── comments.py      # CRUD /tasks/{id}/comments
+│       ├── auth/
+│       │   ├── __init__.py
+│       │   ├── jwt.py           # JWT encode/decode, access + refresh token creation
+│       │   ├── password.py      # bcrypt hash + verify
+│       │   ├── dependencies.py  # get_current_user, require_role, require_owner
+│       │   └── blocklist.py     # Token revocation blocklist (DB-backed)
+│       ├── middleware/
+│       │   ├── __init__.py
+│       │   ├── ratelimit.py     # Sliding-window rate limiter middleware
+│       │   └── cors.py          # CORS configuration
+│       ├── websocket/
+│       │   ├── __init__.py
+│       │   ├── manager.py       # WebSocket connection manager (per-user channels)
+│       │   └── handler.py       # WebSocket endpoint: connect, receive, broadcast
+│       ├── tasks/
+│       │   ├── __init__.py
+│       │   └── background.py    # Background task functions (email, notifications)
+│       └── utils/
+│           ├── __init__.py
+│           └── pagination.py    # Cursor encoding/decoding, paginated query builder
+├── migrations/
+│   ├── env.py                   # Alembic environment config (async)
+│   ├── script.py.mako           # Migration template
+│   └── versions/                # Auto-generated migration files
+├── tests/
+│   ├── conftest.py              # Fixtures: async client, test DB, auth headers, factories
+│   ├── test_auth.py             # Login, refresh, logout, invalid credentials
+│   ├── test_users.py            # User profile, list users, admin operations
+│   ├── test_projects.py         # CRUD projects, ownership, pagination
+│   ├── test_tasks.py            # CRUD tasks, assignment, status transitions
+│   ├── test_comments.py         # CRUD comments, authorization
+│   ├── test_websocket.py        # WebSocket connect, receive notifications
+│   ├── test_ratelimit.py        # Rate limiter enforcement
+│   └── test_pagination.py       # Cursor-based pagination correctness
+├── alembic.ini                  # Alembic configuration
+├── pyproject.toml               # Project metadata, dependencies, scripts
+├── docker-compose.yml           # Development: app + SQLite volume
+├── Dockerfile                   # Multi-stage build for production
+├── .env.example                 # SECRET_KEY, DATABASE_URL, CORS_ORIGINS
 ├── .gitignore
-├── .golangci.yml
+├── .python-version              # 3.14
+├── ruff.toml                    # Ruff linter config
 ├── LICENSE
 └── README.md
 ```
 
 ---
 
-## Core Concepts
+## API Reference
 
-### Agent Execution Loop
+### Authentication
 
-```
-┌─────────────────────────────────────────┐
-│              Agent Loop                  │
-│                                          │
-│  System Prompt + User Message            │
-│         ↓                                │
-│  Call LLM (with tool schemas)            │
-│         ↓                                │
-│  Response has tool_call? ──→ NO ──→ Done │
-│         ↓ YES                            │
-│  Validate args against schema            │
-│         ↓                                │
-│  Execute tool (with timeout)             │
-│         ↓                                │
-│  Append tool_result to history           │
-│         ↓                                │
-│  Token budget check → trim if needed     │
-│         ↓                                │
-│  Loop back to "Call LLM"                 │
-│  (max iterations guard)                  │
-└─────────────────────────────────────────┘
-```
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/auth/login` | Login with email/password, receive access + refresh tokens | None |
+| POST | `/auth/refresh` | Exchange refresh token for new token pair | Refresh token |
+| POST | `/auth/logout` | Revoke current token pair | Access token |
 
-### Supervisor Flow
+### Users
 
-```
-User: "Build a REST API for a todo app in Go"
-         ↓
-┌─ Supervisor ──────────────────────────────────┐
-│  1. Plan: decompose task into sub-tasks        │
-│     → research: "Go REST API best practices"   │
-│     → code: "Implement todo CRUD handlers"     │
-│     → code: "Implement data models"            │
-│     → review: "Review generated code"          │
-│     → writer: "Write API documentation"        │
-│                                                │
-│  2. Build DAG:                                 │
-│     research ──→ code(handlers) ──→ review     │
-│                  code(models) ────→ review      │
-│                                    review ──→ writer │
-│                                                │
-│  3. Execute DAG (parallel where possible):     │
-│     Step 1: research (independent)             │
-│     Step 2: code(handlers) + code(models)      │
-│     Step 3: review                             │
-│     Step 4: writer                             │
-│                                                │
-│  4. Synthesize: merge all outputs into final   │
-└───────────────────────────────────────────────┘
-```
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | `/users/me` | Get current user profile | User |
+| PATCH | `/users/me` | Update current user profile | User |
+| GET | `/users` | List all users (paginated) | Admin |
+| GET | `/users/{id}` | Get user by ID | Admin |
+| PATCH | `/users/{id}` | Update user (role, is_active) | Admin |
 
----
+### Projects
 
-## Agent Types
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/projects` | Create a project | User |
+| GET | `/projects` | List user's projects (paginated) | User |
+| GET | `/projects/{id}` | Get project details | Owner |
+| PATCH | `/projects/{id}` | Update project | Owner |
+| DELETE | `/projects/{id}` | Delete project and tasks | Owner |
 
-| Agent | System Prompt Focus | Tools | Output |
-|-------|-------------------|-------|--------|
-| Supervisor | Task decomposition, planning, delegation | planner (internal) | Sub-task DAG + final synthesis |
-| Researcher | Information gathering, summarization | web_search, memory_write | Research findings stored in shared memory |
-| Coder | Code generation, implementation | code_gen, write_file, memory_read, memory_write | Generated code files + explanation |
-| Reviewer | Code analysis, bug detection, improvements | code_review, memory_read | Review comments + approval/rejection |
-| Writer | Documentation, structuring, formatting | text_gen, memory_read | Formatted text documents |
+### Tasks
 
----
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/projects/{id}/tasks` | Create a task in project | Owner |
+| GET | `/projects/{id}/tasks` | List project tasks (paginated, filterable) | Owner |
+| GET | `/tasks/{id}` | Get task details | Owner/Assignee |
+| PATCH | `/tasks/{id}` | Update task (status, assignee, priority) | Owner/Assignee |
+| DELETE | `/tasks/{id}` | Delete task | Owner |
 
-## Tool Definitions
+### Comments
 
-| Tool | Parameters | Returns | Timeout |
-|------|-----------|---------|---------|
-| `web_search` | `query: string` | `results: [{title, snippet, url}]` | 10s |
-| `code_gen` | `language: string, task: string, context: string` | `code: string, explanation: string` | 30s |
-| `code_review` | `code: string, language: string` | `issues: [{severity, line, message}], approved: bool` | 15s |
-| `text_gen` | `topic: string, style: string, context: string` | `text: string` | 20s |
-| `read_file` | `path: string` | `content: string` | 5s |
-| `write_file` | `path: string, content: string` | `success: bool` | 5s |
-| `memory_read` | `key: string` | `value: string, found: bool` | 1s |
-| `memory_write` | `key: string, value: string` | `success: bool` | 1s |
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/tasks/{id}/comments` | Add comment to task | Owner/Assignee |
+| GET | `/tasks/{id}/comments` | List task comments (paginated) | Owner/Assignee |
+| DELETE | `/comments/{id}` | Delete comment | Author/Admin |
 
----
+### WebSocket
 
-## Shared Memory
+| Endpoint | Description | Auth |
+|----------|-------------|------|
+| `ws://host/ws` | Real-time notifications (task assigned, comment added, status changed) | Token query param |
 
-```go
-// Agents collaborate through shared memory
-memory.Write("research_findings", "Go REST APIs typically use...")   // researcher writes
-findings := memory.Read("research_findings")                         // coder reads
-memory.Write("generated_code", "package main\n...")                  // coder writes
-code := memory.Read("generated_code")                                // reviewer reads
-```
+### Pagination Response
 
-| Operation | Thread-Safe | Description |
-|-----------|-------------|-------------|
-| `Read(key)` | Yes (RLock) | Read value by key, returns (value, found) |
-| `Write(key, value)` | Yes (Lock) | Write value, records author + timestamp |
-| `List()` | Yes (RLock) | List all keys with metadata |
-| `Delete(key)` | Yes (Lock) | Remove key |
-
----
-
-## YAML Configuration
-
-### agents.yaml
-
-```yaml
-agents:
-  researcher:
-    model: gpt-4o
-    provider: openai
-    system_prompt: |
-      You are a research assistant. Your job is to find accurate, relevant
-      information using web search. Summarize findings clearly and store
-      them in shared memory for other agents to use.
-    tools: [web_search, memory_write]
-    max_iterations: 5
-    token_budget: 8000
-
-  coder:
-    model: gpt-4o
-    provider: openai
-    system_prompt: |
-      You are an expert software engineer. Write clean, well-documented,
-      production-quality code. Read research findings from shared memory
-      for context. Write generated code to files.
-    tools: [code_gen, read_file, write_file, memory_read, memory_write]
-    max_iterations: 10
-    token_budget: 16000
-
-  reviewer:
-    model: claude-sonnet-4-20250514
-    provider: anthropic
-    system_prompt: |
-      You are a senior code reviewer. Analyze code for bugs, security issues,
-      performance problems, and style. Be constructive and specific.
-    tools: [code_review, memory_read]
-    max_iterations: 3
-    token_budget: 8000
-
-  writer:
-    model: gpt-4o-mini
-    provider: openai
-    system_prompt: |
-      You are a technical writer. Create clear, well-structured documentation.
-      Read context from shared memory to understand what was built.
-    tools: [text_gen, memory_read]
-    max_iterations: 5
-    token_budget: 8000
+```json
+{
+  "items": [...],
+  "next_cursor": "eyJpZCI6IDQyfQ==",
+  "has_more": true
+}
 ```
 
 ---
 
-## CLI Usage
+## Auth Flow
 
 ```
-agentforge run "Build a REST API for a todo app in Go"
-agentforge run --config ./config/ "Research quantum computing advances in 2025"
-agentforge run --provider anthropic --model claude-sonnet-4-20250514 "Review this Go code for issues"
-agentforge agents list                    # List configured agents
-agentforge tools list                     # List registered tools
-agentforge config validate ./config/      # Validate configuration files
+1. POST /auth/login  { email, password }
+   → { access_token (15min), refresh_token (7d), token_type: "bearer" }
+
+2. Requests: Authorization: Bearer <access_token>
+
+3. POST /auth/refresh  { refresh_token }
+   → { access_token (new, 15min), refresh_token (new, 7d) }
+   Old refresh token is revoked (rotation)
+
+4. POST /auth/logout
+   → Both tokens added to blocklist
 ```
 
-### CLI Output (during execution)
+---
+
+## WebSocket Protocol
 
 ```
-🔵 Supervisor: Planning task decomposition...
-   → Created 4 sub-tasks in dependency DAG
-
-📋 Execution Plan:
-   Step 1: [researcher] Research Go REST API best practices
-   Step 2: [coder] Implement data models  |  [coder] Implement handlers
-   Step 3: [reviewer] Review generated code
-   Step 4: [writer] Write API documentation
-
-🔍 Researcher: Starting "Research Go REST API best practices"
-   🔧 web_search("Go REST API best practices 2025")
-   📝 Stored findings in shared memory: research_findings
-   ✅ Completed in 4.2s
-
-💻 Coder: Starting "Implement data models" (parallel)
-   📖 Read: research_findings
-   🔧 code_gen(language="go", task="todo data models")
-   💾 Wrote: output/models.go
-   ✅ Completed in 8.1s
-
-💻 Coder: Starting "Implement handlers" (parallel)
-   📖 Read: research_findings
-   🔧 code_gen(language="go", task="todo CRUD handlers")
-   💾 Wrote: output/handlers.go
-   ✅ Completed in 12.3s
-
-🔎 Reviewer: Starting "Review generated code"
-   📖 Read: generated_code
-   🔧 code_review(language="go")
-   ✅ Approved with 2 minor suggestions. Completed in 5.7s
-
-📝 Writer: Starting "Write API documentation"
-   📖 Read: research_findings, generated_code, review_results
-   🔧 text_gen(topic="todo API docs")
-   💾 Wrote: output/README.md
-   ✅ Completed in 6.8s
-
-🏁 Task Complete (37.1s total)
-   Files generated: output/models.go, output/handlers.go, output/README.md
-   Agents used: 4 | Tool calls: 9 | Total tokens: 24,847
+1. Client connects: ws://host/ws?token=<access_token>
+2. Server validates token, registers connection for user
+3. Server sends notifications as JSON:
+   { "type": "task_assigned", "data": { "task_id": 1, "project": "My Project" } }
+   { "type": "comment_added", "data": { "task_id": 1, "author": "jane" } }
+   { "type": "status_changed", "data": { "task_id": 1, "old": "todo", "new": "in_progress" } }
+4. Server sends ping every 30s, client responds pong
+5. Client disconnect → remove from manager
 ```
 
 ---
@@ -352,274 +201,187 @@ agentforge config validate ./config/      # Validate configuration files
 
 | Component | Choice |
 |-----------|--------|
-| Language | Go 1.26 |
-| HTTP | stdlib `net/http` (for LLM API calls) |
-| JSON | stdlib `encoding/json` |
-| YAML | `gopkg.in/yaml.v3` |
-| CLI | `cobra` + `pflag` |
-| Concurrency | `errgroup` + semaphore channel |
-| LLM Providers | OpenAI, Anthropic, Ollama (raw HTTP, no SDKs) |
-| Testing | stdlib + mock provider + table-driven |
-| Linting | golangci-lint |
+| Language | Python 3.14 |
+| Framework | FastAPI 0.115 |
+| ORM | SQLModel 0.0.22 (SQLAlchemy 2.0 + Pydantic v2) |
+| Database | SQLite with aiosqlite (async driver) |
+| Migrations | Alembic 1.14 (async mode) |
+| Auth | python-jose (JWT), bcrypt (passwords) |
+| Validation | Pydantic v2 (built into FastAPI) |
+| WebSocket | FastAPI WebSocket (built-in, via Starlette) |
+| Settings | pydantic-settings (env var loading) |
+| Testing | pytest + pytest-asyncio + httpx (AsyncClient) |
+| Containerization | Docker + Docker Compose |
+| Linting | ruff |
 
 ---
 
 ## Phased Build Plan
 
-### Phase 1: Foundation & Types
+### Phase 1: Foundation
 
 **1.1 — Project setup**
-- `go mod init github.com/devaloi/agentforge`
-- Directory structure, Makefile, `.gitignore`, `.golangci.yml`
-- Add LICENSE (MIT), `.env.example`
+- `pyproject.toml` with metadata, dependencies, scripts
+- Directory structure, `ruff.toml`, `.gitignore`, `.python-version`
+- Install: `fastapi[standard]`, `sqlmodel`, `aiosqlite`, `python-jose[cryptography]`, `bcrypt`, `pydantic-settings`, `alembic`, `httpx`, `pytest`, `pytest-asyncio`, `uvicorn`
 
-**1.2 — Core types**
-- `Message` struct: Role (system/user/assistant/tool), Content, ToolCalls, ToolCallID
-- `ToolCall` struct: ID, Name, Arguments (JSON string)
-- `ToolResult` struct: ToolCallID, Content, IsError
-- `AgentConfig`: Name, Model, Provider, SystemPrompt, Tools (list), MaxIterations, TokenBudget
-- `SubTask`: ID, Description, AgentType, Dependencies ([]string), Status, Result
-- Tests: type construction, JSON marshaling round-trips
+**1.2 — Config + database**
+- `Settings` class via pydantic-settings: `SECRET_KEY`, `DATABASE_URL`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `CORS_ORIGINS`
+- Async SQLAlchemy engine with aiosqlite
+- Async session factory with `async_sessionmaker`
+- `.env.example` with all config keys
+- Tests: settings load from env, database session creates/closes
 
-**1.3 — Configuration loader**
-- Load `agents.yaml`: parse into `[]AgentConfig`
-- Load `tools.yaml`: parse into `[]ToolConfig`
-- Load `providers.yaml`: parse into `ProviderConfig` (API keys from env vars, not YAML)
-- Validate: agent references valid provider, tools exist, required fields present
-- Tests: load valid config, missing fields, invalid references
+**1.3 — SQLModel models**
+- `User`: id, email (unique), hashed_password, display_name, role (admin/user), is_active, created_at, updated_at
+- `Project`: id, name, description, status (active/archived), owner_id (FK→User), created_at, updated_at
+- `Task`: id, title, description, status (todo/in_progress/done), priority (low/medium/high), project_id (FK→Project), assignee_id (FK→User, nullable), created_at, updated_at
+- `Comment`: id, body, task_id (FK→Task), author_id (FK→User), created_at
+- Alembic init with async env.py, generate initial migration
+- Tests: models create/read/update in test DB
 
-### Phase 2: LLM Providers & History
+**1.4 — Pydantic schemas**
+- Request/response schemas for each model (Create, Read, Update variants)
+- `TokenResponse`, `LoginRequest`, `RefreshRequest` auth schemas
+- `PaginatedResponse[T]` generic with items, next_cursor, has_more
+- Tests: schema validation accepts valid, rejects invalid
 
-**2.1 — Provider interface**
-- `Provider` interface: `ChatComplete(ctx, messages []Message, tools []Tool, config Config) (*Response, error)`
-- `Response`: Content string, ToolCalls []ToolCall, Usage (prompt tokens, completion tokens)
-- `StreamChunk`: Delta content, tool call delta, finish reason
-- Provider registry: get provider by name
+### Phase 2: Authentication
 
-**2.2 — OpenAI provider**
-- HTTP POST to `chat/completions` with function calling
-- Format messages: system, user, assistant, tool roles
-- Format tools: JSON Schema function definitions
-- Parse response: extract content, tool_calls, usage
-- Streaming: SSE parsing, yield chunks
-- Tests with httptest: success, tool call, streaming, error, rate limit
+**2.1 — Password hashing**
+- bcrypt hash and verify functions
+- Tests: hash is different from plain text, verify matches, verify rejects wrong password
 
-**2.3 — Anthropic provider**
-- HTTP POST to `messages` API with tool_use
-- Format messages: Anthropic's content block format
-- Parse tool_use content blocks vs text blocks
-- Handle stop_reason: "end_turn" vs "tool_use"
-- Tests with httptest matching OpenAI coverage
+**2.2 — JWT tokens**
+- `create_access_token(user_id, role)` → JWT with 15min expiry
+- `create_refresh_token(user_id)` → JWT with 7d expiry
+- `decode_token(token)` → payload or raise
+- Tests: encode/decode round-trip, expired token raises, invalid token raises
 
-**2.4 — Ollama provider**
-- HTTP POST to local Ollama API (`/api/chat`)
-- Format messages and tools for Ollama's format
-- Parse response with tool calls
-- Tests with httptest
+**2.3 — Token blocklist**
+- `BlockedToken` model: jti (unique), blocked_at, expires_at
+- `block_token(jti)`, `is_blocked(jti)` async functions
+- Cleanup expired entries on app startup
+- Tests: block and check, non-blocked passes, expired cleanup
 
-**2.5 — Conversation history**
-- Per-agent message history: append user, assistant, tool messages
-- Token counting: approximate count (chars / 4 as rough estimate)
-- Trimmer: when approaching token budget, drop oldest non-system messages
-- Configurable token budget per agent
-- Tests: append, trim at budget, system message preserved, accurate counting
+**2.4 — Auth dependencies**
+- `get_current_user` — extract token from Authorization header, decode, fetch user, check blocklist
+- `require_role(role)` — dependency that checks user role
+- `require_owner(resource)` — dependency that checks resource ownership
+- Tests: valid token → user, expired → 401, wrong role → 403, non-owner → 403
 
-### Phase 3: Tool System & Shared Memory
+**2.5 — Auth routes**
+- `POST /auth/login` — validate credentials, return token pair
+- `POST /auth/refresh` — validate refresh token, rotate (block old, issue new pair)
+- `POST /auth/logout` — block both tokens
+- Tests: login success/failure, refresh rotates tokens, logout revokes
 
-**3.1 — Tool interface and registry**
-- `Tool` interface: `Name() string`, `Description() string`, `Schema() JSONSchema`, `Execute(ctx, params map[string]any) (*ToolResult, error)`
-- `Registry`: Register, Get, List, Invoke (with timeout)
-- JSON Schema for each tool's parameters: type, properties, required
-- Invoke wraps Execute with `context.WithTimeout`
-- Tests: register, invoke, timeout, unknown tool, schema validation
+### Phase 3: CRUD + Pagination
 
-**3.2 — Built-in tools**
-- `web_search`: query → results array (simulated with configurable mock/real API)
-- `code_gen`: language + task + context → generated code + explanation (delegates to LLM)
-- `code_review`: code + language → issues array + approved bool (delegates to LLM)
-- `text_gen`: topic + style + context → generated text (delegates to LLM)
-- `read_file`: path → content (sandboxed to output directory)
-- `write_file`: path + content → success (sandboxed to output directory)
-- Each tool has JSON Schema, timeout config, error handling
-- Tests for each tool (mock LLM for generation tools)
+**3.1 — Cursor-based pagination**
+- Encode cursor: base64 of `{"id": last_id}` (opaque to client)
+- Decode cursor: extract last_id for `WHERE id > last_id`
+- `paginate(query, cursor, limit)` → items + next_cursor + has_more
+- Tests: first page no cursor, subsequent pages use cursor, empty page has_more=false
 
-**3.3 — Memory tools and shared store**
-- `SharedMemory`: thread-safe key-value store (`sync.RWMutex` + map)
-- `MemoryEntry`: Value, Author (agent name), Timestamp, Tags
-- `memory_read` tool: read key from shared memory
-- `memory_write` tool: write key to shared memory with agent attribution
-- `List()`: return all keys with metadata
-- Tests: concurrent read/write, agent attribution, list keys
+**3.2 — Project routes**
+- Full CRUD with ownership checks
+- List: paginated, filtered by owner (users see own projects, admin sees all)
+- Tests: create, read, update, delete, unauthorized access blocked, pagination
 
-### Phase 4: Agent Execution Loop
+**3.3 — Task routes**
+- CRUD nested under projects (`/projects/{id}/tasks`)
+- Assignment: set assignee_id, trigger WebSocket notification
+- Status transitions: todo → in_progress → done
+- Filter by status, priority, assignee
+- Tests: CRUD, assignment, filters, unauthorized
 
-**4.1 — Core agent loop**
-- `Agent` struct: config, provider, tools (registry), history, memory (shared)
-- `Run(ctx, task string) (*AgentResult, error)`:
-  1. Append system prompt to history
-  2. Append user message (task) to history
-  3. Call provider with history + tool schemas
-  4. If response has tool calls → execute each tool → append results → loop
-  5. If response has no tool calls → return content as final result
-  6. Max iterations guard with clear error
-- `AgentResult`: Content, ToolCallsUsed, TokensUsed, Duration
-- Tests with mock provider: no tools, single tool call, multi-tool chain, max iterations
+**3.4 — Comment routes**
+- CRUD nested under tasks (`/tasks/{id}/comments`)
+- Only author or admin can delete
+- Adding comment triggers WebSocket notification
+- Tests: create, list, delete own, cannot delete others (non-admin)
 
-**4.2 — Specialized agent constructors**
-- `NewResearcher(config, provider, memory)` — configured with researcher system prompt + tools
-- `NewCoder(config, provider, memory)` — configured with coder system prompt + tools
-- `NewReviewer(config, provider, memory)` — configured with reviewer system prompt + tools
-- `NewWriter(config, provider, memory)` — configured with writer system prompt + tools
-- Each reads its config from agents.yaml, registers its tools subset
-- Tests: each agent type runs with mock provider, uses correct tools
+### Phase 4: WebSocket + Background Tasks + Middleware
 
-### Phase 5: Planning & DAG Execution
+**4.1 — WebSocket connection manager**
+- `ConnectionManager`: dict of user_id → set of WebSocket connections
+- `connect(user_id, ws)`, `disconnect(user_id, ws)`, `send_to_user(user_id, message)`
+- Token validation on connect (from query parameter)
+- Heartbeat: ping every 30s, disconnect on pong timeout
+- Tests: connect/disconnect, send to specific user, invalid token rejected
 
-**5.1 — DAG data structure**
-- `DAG` struct: nodes map, edges adjacency list
-- `AddNode(task SubTask)`, `AddEdge(from, to string)` — dependency: `from` must complete before `to`
-- `TopologicalSort() ([][]string, error)` — return execution layers (parallel groups)
-- Cycle detection: return error if DAG has cycles
-- `Ready(completed []string) []string` — return tasks whose dependencies are all completed
-- Tests: simple chain, diamond dependency, parallel groups, cycle detection
+**4.2 — WebSocket notifications**
+- Trigger notifications from route handlers: task assigned, comment added, status changed
+- JSON message format: `{ type, data, timestamp }`
+- Tests: assign task → assignee receives notification, add comment → task owner notified
 
-**5.2 — Task planner**
-- `Plan(ctx, task string, provider Provider) (*DAG, error)`
-- Send task to supervisor LLM with planning prompt
-- Planning prompt instructs LLM to decompose into sub-tasks with JSON output:
-  ```json
-  {
-    "tasks": [
-      {"id": "research", "description": "...", "agent": "researcher", "depends_on": []},
-      {"id": "code_models", "description": "...", "agent": "coder", "depends_on": ["research"]},
-      {"id": "review", "description": "...", "agent": "reviewer", "depends_on": ["code_models"]}
-    ]
-  }
-  ```
-- Parse LLM response into DAG structure
-- Validate: all dependencies reference valid task IDs, agent types exist
-- Tests with mock provider: simple plan, complex plan, invalid plan handling
+**4.3 — Background tasks**
+- Use FastAPI `BackgroundTasks` for non-blocking work
+- Example: send notification email on task assignment (log-only, no real email)
+- Example: update project statistics after task status change
+- Tests: background task is enqueued and executes
 
-**5.3 — DAG executor**
-- `Execute(ctx, dag *DAG, agentFactory AgentFactory) (*ExecutionResult, error)`
-- Get execution layers from topological sort
-- For each layer: run all tasks in parallel (`errgroup` with semaphore)
-- Each task: create agent of specified type, run with task description
-- Collect results per task, update task status
-- If a task fails: mark dependents as blocked, continue independent tasks
-- `ExecutionResult`: per-task results, total duration, success/failure counts
-- Tests: sequential execution, parallel execution, failure propagation, timeout
+**4.4 — Rate limiting middleware**
+- Sliding-window algorithm: track request timestamps per IP (or per user if authenticated)
+- Configurable: requests per window, window size
+- Return `429 Too Many Requests` with `Retry-After` header
+- Tests: within limit passes, exceeding limit returns 429, window slides
 
-### Phase 6: Supervisor & Synthesis
+**4.5 — CORS middleware**
+- Configurable origins from settings
+- Tests: allowed origin passes, disallowed blocked
 
-**6.1 — Supervisor agent**
-- `Supervisor` struct: planner, executor, synthesizer, config
-- `Run(ctx, task string) (*SupervisorResult, error)`:
-  1. Call planner to decompose task into DAG
-  2. Log execution plan
-  3. Call executor to run DAG
-  4. Call synthesizer to merge results
-  5. Return final synthesized output
-- Pass shared memory to all sub-agents for collaboration
-- Tests: full flow with mock provider (scripted planning + execution responses)
+### Phase 5: Docker + Polish
 
-**6.2 — Result synthesizer**
-- `Synthesize(ctx, task string, results map[string]*AgentResult, provider Provider) (string, error)`
-- Send all sub-task results to LLM with synthesis prompt
-- Synthesis prompt: "Given the original task and these sub-agent results, produce the final comprehensive output"
-- Format results clearly for the LLM (task description + agent output for each)
-- Tests: synthesis produces coherent output, handles partial failures
+**5.1 — Docker Compose**
+- `Dockerfile`: multi-stage (builder + runtime), non-root user
+- `docker-compose.yml`: app service with SQLite volume mount, env_file
+- Tests: `docker compose build` succeeds
 
-**6.3 — Observability**
-- Structured logger: `slog` with JSON output
-- Log events: `agent_start`, `agent_complete`, `tool_call`, `tool_result`, `plan_created`, `task_started`, `task_completed`, `task_failed`
-- Each event includes: timestamp, agent name, duration, token usage
-- Execution trace: collect all events into a timeline, printable summary
-- Tests: events logged correctly, trace reconstruction
+**5.2 — App factory + lifespan**
+- `create_app()` factory function: register routers, middleware, WebSocket, lifespan
+- Lifespan: create tables on startup (dev), cleanup blocklist, shutdown WebSocket manager
+- Auto-generated OpenAPI docs at `/docs` and `/redoc`
 
-### Phase 7: CLI & Examples
+**5.3 — Integration tests**
+- Full user journey: register → login → create project → add tasks → assign → comment → check WebSocket
+- Admin operations: list users, change roles
+- Token refresh and rotation
+- Rate limit enforcement
 
-**7.1 — CLI with cobra**
-- `agentforge run <task>` — run supervisor with task
-  - `--config` — config directory (default `./config/`)
-  - `--provider` — override default provider
-  - `--model` — override default model
-  - `--verbose` — show detailed execution trace
-  - `--output-dir` — directory for generated files (default `./output/`)
-- `agentforge agents list` — list configured agents with tools
-- `agentforge tools list` — list registered tools with schemas
-- `agentforge config validate <dir>` — validate config files
-- Live output during execution: agent status, tool calls, progress
-
-**7.2 — Example programs**
-- `simple/main.go`: single researcher agent answers a question
-- `code-task/main.go`: multi-agent code generation (plan → code → review → deliver)
-- `research-report/main.go`: multi-agent research report (research → write → synthesize)
-- Each example is self-contained with inline config (no YAML dependency)
-
-**7.3 — Integration tests**
-- Full supervisor test: task → plan → execute → synthesize with mock provider
-- Multi-agent collaboration test: agents read/write shared memory correctly
-- DAG execution test: parallel tasks run concurrently, dependencies respected
-- Failure handling test: sub-agent failure doesn't crash supervisor
-- Config loading test: YAML files parse and validate correctly
-
-### Phase 8: Documentation & Polish
-
-**8.1 — YAML config files**
-- `config/agents.yaml`: all 4 agent types with realistic system prompts
-- `config/tools.yaml`: all tools with JSON Schema parameter definitions
-- `config/providers.yaml`: provider configs with env var references for API keys
-
-**8.2 — README**
-- Architecture diagram (supervisor flow)
-- Quick start: `go build && agentforge run "Build a REST API"`
-- Agent types table with descriptions
-- Tool reference table
-- Configuration guide (YAML format)
-- CLI usage with examples
-- How to add custom agents and tools
-- Example execution output (the full CLI output shown above)
-- Design decisions: why no LangChain, why DAG, why shared memory
-
-**8.3 — Final checks**
-- `go build ./...` clean
-- `go test -race ./...` all pass
-- `golangci-lint run` clean
-- CLI: `agentforge run`, `agentforge agents list`, `agentforge tools list` all work
-- Config validation catches errors
-- Example programs run with mock provider
-- No `// TODO` or `// FIXME`
-- Fresh clone → build → run (with mock) works
+**5.4 — README and documentation**
+- Badges, install, quick start
+- API reference table
+- Auth flow diagram
+- WebSocket protocol description
+- Docker Compose usage
+- Development commands (test, lint, migrate)
+- OpenAPI docs screenshot placeholder
 
 ---
 
 ## Commit Plan
 
-1. `chore: scaffold project with directory structure and config`
-2. `feat: add core types — Message, ToolCall, SubTask, AgentConfig`
-3. `feat: add YAML configuration loader with validation`
-4. `feat: add LLM provider interface and mock provider`
-5. `feat: add OpenAI provider with function calling and streaming`
-6. `feat: add Anthropic provider with tool_use support`
-7. `feat: add Ollama provider for local models`
-8. `feat: add conversation history with token budget trimming`
-9. `feat: add tool interface, registry, and JSON Schema definitions`
-10. `feat: add built-in tools — web search, code gen, code review, text gen`
-11. `feat: add file tools — read and write with sandboxing`
-12. `feat: add shared memory store with agent attribution`
-13. `feat: add memory read/write tools`
-14. `feat: add core agent execution loop with max iterations`
-15. `feat: add specialized agent constructors (researcher, coder, reviewer, writer)`
-16. `feat: add DAG data structure with topological sort and cycle detection`
-17. `feat: add task planner — decompose task into sub-task DAG via LLM`
-18. `feat: add DAG executor with parallel execution and failure handling`
-19. `feat: add supervisor agent with plan-execute-synthesize flow`
-20. `feat: add result synthesizer for merging sub-agent outputs`
-21. `feat: add structured logging and execution trace`
-22. `feat: add CLI with cobra — run, agents list, tools list, config validate`
-23. `feat: add example programs — simple, code-task, research-report`
-24. `test: add integration tests for full supervisor flow`
-25. `feat: add YAML config files for agents, tools, and providers`
-26. `docs: add README with architecture, configuration, and usage guide`
-27. `chore: final lint pass and cleanup`
+1. `chore: scaffold project with pyproject.toml and directory structure`
+2. `feat: add config with pydantic-settings and async database setup`
+3. `feat: add SQLModel models for User, Project, Task, Comment`
+4. `feat: add Alembic migrations with async support`
+5. `feat: add Pydantic request/response schemas`
+6. `feat: add password hashing and JWT token utilities`
+7. `feat: add token blocklist for revocation`
+8. `feat: add auth dependencies — get_current_user, require_role, require_owner`
+9. `feat: add auth routes — login, refresh, logout`
+10. `feat: add cursor-based pagination utility`
+11. `feat: add project CRUD routes with ownership`
+12. `feat: add task CRUD routes with assignment and filters`
+13. `feat: add comment CRUD routes with authorization`
+14. `feat: add WebSocket connection manager with heartbeat`
+15. `feat: add WebSocket notification triggers`
+16. `feat: add background tasks for notifications`
+17. `feat: add sliding-window rate limiting middleware`
+18. `feat: add CORS middleware configuration`
+19. `feat: add app factory with lifespan and OpenAPI`
+20. `feat: add Docker and Docker Compose configuration`
+21. `test: add integration tests for full user journeys`
+22. `docs: add README with API reference, auth flow, and setup guide`
