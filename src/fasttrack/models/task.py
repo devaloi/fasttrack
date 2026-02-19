@@ -30,5 +30,5 @@ class Task(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     project: "Project" = Relationship(back_populates="tasks")  # type: ignore[name-defined]  # noqa: F821
-    assignee: "User | None" = Relationship(back_populates="assigned_tasks")  # type: ignore[name-defined]  # noqa: F821
+    assignee: "User" = Relationship(back_populates="assigned_tasks")  # type: ignore[name-defined]  # noqa: F821
     comments: list["Comment"] = Relationship(back_populates="task")  # type: ignore[name-defined]  # noqa: F821
