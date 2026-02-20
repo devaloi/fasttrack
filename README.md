@@ -1,5 +1,7 @@
 # fasttrack
 
+[![CI](https://github.com/devaloi/fasttrack/actions/workflows/ci.yml/badge.svg)](https://github.com/devaloi/fasttrack/actions/workflows/ci.yml)
+
 Production-grade async REST API with FastAPI — SQLModel ORM, JWT authentication with refresh tokens, role-based permissions, WebSocket notifications, background tasks, cursor-based pagination, rate limiting, and a comprehensive async test suite.
 
 ## Tech Stack
